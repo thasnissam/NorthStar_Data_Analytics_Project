@@ -1,0 +1,1944 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/thasnissam/NorthStar_Data_Analytics_Project/blob/main/Notebooks\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "# NorthStar Urban Mobility and Logistics\n",
+        "## R and SQL Analytical Documentation"
+      ],
+      "metadata": {
+        "id": "ZOV6Rra3sen9"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 1. Loading Required Packages\n",
+        "\n",
+        "### Purpose\n",
+        "Install and load all required R libraries for data analysis and SQL operations.\n",
+        "\n",
+        "## 2. Importing Operational Datasets\n",
+        "\n",
+        "### Purpose\n",
+        "Import all CSV datasets into R data frames for analysis."
+      ],
+      "metadata": {
+        "id": "qFW73Uwo7Ulr"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Install and load packages\n",
+        "install.packages(c('sqldf','ggplot2','dplyr','tidyr','lubridate','scales'))\n",
+        "library(sqldf)\n",
+        "library(ggplot2)\n",
+        "library(dplyr)\n",
+        "library(tidyr)\n",
+        "library(lubridate)\n",
+        "library(scales)\n",
+        "\n",
+        "# Import all CSV files\n",
+        "customers   <- read.csv('customers.csv', stringsAsFactors = FALSE)\n",
+        "orders      <- read.csv('orders.csv', stringsAsFactors = FALSE)\n",
+        "deliveries  <- read.csv('deliveries.csv', stringsAsFactors = FALSE)\n",
+        "drivers     <- read.csv('drivers.csv', stringsAsFactors = FALSE)\n",
+        "vehicles    <- read.csv('vehicles.csv', stringsAsFactors = FALSE)\n",
+        "hubs        <- read.csv('hubs.csv', stringsAsFactors = FALSE)\n",
+        "complaints  <- read.csv('complaints.csv', stringsAsFactors = FALSE)\n",
+        "incidents   <- read.csv('incidents.csv', stringsAsFactors = FALSE)\n",
+        "app_events  <- read.csv('app_events.csv', stringsAsFactors = FALSE)\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "n3Pyt4kPn1eI",
+        "outputId": "2b553033-de2b-43c7-a7e0-0cf205fb4225"
+      },
+      "execution_count": 22,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "Installing packages into ‘/usr/local/lib/R/site-library’\n",
+            "(as ‘lib’ is unspecified)\n",
+            "\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 3. Data Cleaning and Standardisation\n",
+        "\n",
+        "### Purpose\n",
+        "Improve data quality and standardise inconsistent values.\n",
+        "\n",
+        "#### Key Activities\n",
+        "- Remove extra spaces\n",
+        "- Standardise text formatting\n",
+        "- Correct inconsistent labels\n",
+        "- Normalise zone names\n"
+      ],
+      "metadata": {
+        "id": "DLElHvdw9BnU"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# --- DATA STANDARDISATION AND CLEANING ---\n",
+        "\n",
+        "# 1. Normalise string formats: Remove accidental spaces (trimws) and unify case\n",
+        "# This prevents duplicates like \"Central\" vs \" CENTRAL\" vs \"CENTRAL\"\n",
+        "orders$pickup_zone      <- trimws(toupper(orders$pickup_zone))\n",
+        "orders$dropoff_zone     <- trimws(toupper(orders$dropoff_zone))\n",
+        "drivers$base_zone       <- trimws(toupper(drivers$base_zone))\n",
+        "vehicles$assigned_zone  <- trimws(toupper(vehicles$assigned_zone))\n",
+        "customers$home_zone     <- trimws(toupper(customers$home_zone))\n",
+        "\n",
+        "# Standardise complaint channels to lowercase for consistent grouping\n",
+        "complaints$channel <- trimws(tolower(complaints$channel))\n",
+        "\n",
+        "# Unify maintenance labels to uppercase\n",
+        "vehicles$maintenance_status <- trimws(toupper(vehicles$maintenance_status))\n",
+        "\n",
+        "# Merge orders information into deliveries to get pickup_zone\n",
+        "deliveries <- deliveries %>%\n",
+        "  left_join(orders %>% select(order_id, pickup_zone), by = \"order_id\")\n",
+        "\n",
+        "# 2. Logic Mapping: Merging variations into a single \"Source of Truth\"\n",
+        "# This addresses the 'System Inconsistency' mentioned in the NorthStar case study.\n",
+        "orders$pickup_zone <- dplyr::case_when(\n",
+        "  # Group shorthand 'CTR' and variations like 'CENTRE' into the official 'CENTRAL' name\n",
+        "  orders$pickup_zone %in% c(\"CTR\", \"CENTRE\") ~ \"CENTRAL\",\n",
+        "  TRUE ~ orders$pickup_zone\n",
+        ")\n",
+        "\n",
+        "deliveries$pickup_zone <- dplyr::case_when(\n",
+        "  deliveries$pickup_zone %in% c(\"CTR\", \"CENTRE\") ~ \"CENTRAL\",\n",
+        "  deliveries$pickup_zone %in% c(\"RIVERSIDE\", \"RIVERSIDE \") ~ \"RIVERSIDE\",\n",
+        "  deliveries$pickup_zone %in% c(\"NORTH\") ~ \"NORTH\",\n",
+        "  deliveries$pickup_zone %in% c(\"SOUTH\") ~ \"SOUTH\",\n",
+        "  deliveries$pickup_zone %in% c(\"EAST\") ~ \"EAST\",\n",
+        "  deliveries$pickup_zone %in% c(\"WEST\") ~ \"WEST\",\n",
+        "  deliveries$pickup_zone %in% c(\"AIRPORT\") ~ \"AIRPORT\",\n",
+        "  TRUE ~ deliveries$pickup_zone\n",
+        ")\n",
+        "\n",
+        "drivers$base_zone <- dplyr::case_when(\n",
+        "  drivers$base_zone %in% c(\"CTR\", \"CENTRE\") ~ \"CENTRAL\",\n",
+        "  TRUE ~ drivers$base_zone\n",
+        ")"
+      ],
+      "metadata": {
+        "id": "MFaQIQpT8kD5"
+      },
+      "execution_count": 23,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 4. Dataset Dimensions and Overview\n",
+        "\n",
+        "### Purpose\n",
+        "Check dataset size and verify successful data loading."
+      ],
+      "metadata": {
+        "id": "ZkGdYJpVFajw"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "cat(\"=== DATASET DIMENSIONS ===\\n\")\n",
+        "cat(\"Orders: \", nrow(orders), \"rows,\", ncol(orders), \"columns\\n\")\n",
+        "cat(\"Deliveries: \", nrow(deliveries), \"rows,\", ncol(deliveries), \"columns\\n\")\n",
+        "cat(\"Customers: \", nrow(customers), \"rows,\", ncol(customers), \"columns\\n\")\n",
+        "cat(\"Drivers: \", nrow(drivers), \"rows,\", ncol(drivers), \"columns\\n\")\n",
+        "cat(\"Vehicles: \", nrow(vehicles), \"rows,\", ncol(vehicles), \"columns\\n\")\n",
+        "cat(\"Complaints: \", nrow(complaints), \"rows,\", ncol(complaints), \"columns\\n\")\n",
+        "cat(\"Incidents: \", nrow(incidents), \"rows,\", ncol(incidents), \"columns\\n\")\n",
+        "cat(\"Hubs: \", nrow(hubs), \"rows,\", ncol(hubs), \"columns\\n\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "qaUXSHbGFaKy",
+        "outputId": "d578fa4e-5336-4d93-896d-4327108d90f2"
+      },
+      "execution_count": 24,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "=== DATASET DIMENSIONS ===\n",
+            "Orders:  1250 rows, 11 columns\n",
+            "Deliveries:  950 rows, 14 columns\n",
+            "Customers:  650 rows, 9 columns\n",
+            "Drivers:  170 rows, 8 columns\n",
+            "Vehicles:  120 rows, 8 columns\n",
+            "Complaints:  320 rows, 10 columns\n",
+            "Incidents:  280 rows, 7 columns\n",
+            "Hubs:  8 rows, 5 columns\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 5. Structural Inspection and Data Types\n",
+        "\n",
+        "### Purpose\n",
+        "Inspect dataset structure, variables, and data types.\n"
+      ],
+      "metadata": {
+        "id": "AcgRLzM2MZv5"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "cat(\"=== ORDERS STRUCTURE ===\\n\")\n",
+        "str(orders)\n",
+        "\n",
+        "cat(\"\\n=== DELIVERIES STRUCTURE ===\\n\")\n",
+        "str(deliveries)\n",
+        "\n",
+        "cat(\"\\n=== COMPLAINTS STRUCTURE ===\\n\")\n",
+        "str(complaints)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "I8cp-rLhMa6i",
+        "outputId": "e5ef7639-d04b-4818-e449-e88fa3b53154"
+      },
+      "execution_count": 25,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "=== ORDERS STRUCTURE ===\n",
+            "'data.frame':\t1250 obs. of  11 variables:\n",
+            " $ order_id             : chr  \"O00001\" \"O00002\" \"O00003\" \"O00004\" ...\n",
+            " $ customer_id          : chr  \"C0292\" \"C0459\" \"C0161\" \"C0520\" ...\n",
+            " $ service_type         : chr  \"Passenger\" \"Passenger\" \"Passenger\" \"Parcel\" ...\n",
+            " $ order_created_at     : chr  \"2024-08-20 14:43:00\" \"2024-05-14 22:16:00\" \"2025-09-02 14:37:00\" \"2025-01-11 17:15:00\" ...\n",
+            " $ promised_window_hours: int  6 24 4 2 12 1 2 4 12 6 ...\n",
+            " $ pickup_zone          : chr  \"AIRPORT\" \"NORTH\" \"WEST\" \"RIVERSIDE\" ...\n",
+            " $ dropoff_zone         : chr  \"SOUTH\" \"AIRPORT\" \"AIRPORT\" \"NORTH\" ...\n",
+            " $ priority_level       : chr  \"Medium\" \"Low\" \"High\" \"Medium\" ...\n",
+            " $ order_value          : num  126.7 109.3 33.5 10 125.6 ...\n",
+            " $ booking_channel      : chr  \"App\" \"App\" \"Phone\" \"App\" ...\n",
+            " $ special_handling_flag: int  0 0 0 1 0 1 0 0 0 0 ...\n",
+            "\n",
+            "=== DELIVERIES STRUCTURE ===\n",
+            "'data.frame':\t950 obs. of  14 variables:\n",
+            " $ delivery_id                  : chr  \"DL00001\" \"DL00002\" \"DL00003\" \"DL00004\" ...\n",
+            " $ order_id                     : chr  \"O00938\" \"O00004\" \"O00639\" \"O00313\" ...\n",
+            " $ driver_id                    : chr  \"D004\" \"D138\" \"D006\" \"D116\" ...\n",
+            " $ vehicle_id                   : chr  \"V056\" \"V007\" \"V049\" \"V055\" ...\n",
+            " $ hub_id                       : chr  \"H05\" \"H02\" \"H02\" \"H02\" ...\n",
+            " $ dispatch_time                : chr  \"2024-06-18 10:57:00\" \"2025-01-11 18:45:00\" \"2025-06-02 20:39:00\" \"2024-03-08 23:31:00\" ...\n",
+            " $ delivery_completed_at        : chr  \"2024-06-19 09:05:59.904311\" \"2025-01-11 17:39:00.000000\" \"2025-06-02 21:45:32.366770\" \"2024-03-09 23:30:08.103702\" ...\n",
+            " $ delivery_status              : chr  \"Failed\" \"OnTime\" \"OnTime\" \"Delayed\" ...\n",
+            " $ route_distance_km            : num  17.26 10.34 7.92 16.42 14.52 ...\n",
+            " $ manual_route_override_count  : int  1 1 0 0 1 0 0 1 1 1 ...\n",
+            " $ proof_of_completion_missing  : int  0 0 0 0 0 0 0 0 0 0 ...\n",
+            " $ customer_rating_post_delivery: num  3.07 5 4.98 4.18 4.18 1.57 4.64 3.76 3.7 3.2 ...\n",
+            " $ fuel_or_charge_cost          : num  12.05 13.41 8.51 13.62 9.22 ...\n",
+            " $ pickup_zone                  : chr  \"CENTRAL\" \"RIVERSIDE\" \"CENTRAL\" \"SOUTH\" ...\n",
+            "\n",
+            "=== COMPLAINTS STRUCTURE ===\n",
+            "'data.frame':\t320 obs. of  10 variables:\n",
+            " $ complaint_id       : chr  \"CP0001\" \"CP0002\" \"CP0003\" \"CP0004\" ...\n",
+            " $ customer_id        : chr  \"C0464\" \"C0056\" \"C0469\" \"C0631\" ...\n",
+            " $ order_id           : chr  \"O00814\" \"O00628\" \"O00384\" \"O00406\" ...\n",
+            " $ complaint_type     : chr  \"AppIssue\" \"MissedPickup\" \"Delay\" \"Delay\" ...\n",
+            " $ channel            : chr  \"app\" \"phone\" \"chatbot\" \"app\" ...\n",
+            " $ severity           : chr  \"High\" \"Medium\" \"High\" \"Medium\" ...\n",
+            " $ created_at         : chr  \"2025-03-30 02:36:00\" \"2024-11-07 10:05:00\" \"2024-01-02 15:47:00\" \"2025-01-14 13:07:00\" ...\n",
+            " $ status             : chr  \"Open\" \"Open\" \"Open\" \"AwaitingCustomer\" ...\n",
+            " $ resolution_days    : int  11 4 16 7 1 9 4 18 4 1 ...\n",
+            " $ compensation_amount: num  24 21.6 26.4 23.4 16.2 ...\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 6. Missing Value Analysis\n",
+        "\n",
+        "### Purpose\n",
+        "Identify incomplete records and measure missing values."
+      ],
+      "metadata": {
+        "id": "eIIMCiIyPctP"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "count_missing <- function(df, name) {\n",
+        "  total <- sum(is.na(df))\n",
+        "  cat(name, \"— missing values:\", total, \"\\n\")\n",
+        "}\n",
+        "\n",
+        "cat(\"=== MISSING VALUES PER TABLE ===\\n\")\n",
+        "count_missing(orders, \"Orders\")\n",
+        "count_missing(deliveries, \"Deliveries\")\n",
+        "count_missing(customers, \"Customers\")\n",
+        "count_missing(drivers, \"Drivers\")\n",
+        "count_missing(vehicles, \"Vehicles\")\n",
+        "count_missing(complaints, \"Complaints\")\n",
+        "count_missing(incidents, \"Incidents\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "TRZ-CADAPcck",
+        "outputId": "f03b9814-ce54-4cff-c4e0-7477f68262cc"
+      },
+      "execution_count": 26,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "=== MISSING VALUES PER TABLE ===\n",
+            "Orders — missing values: 0 \n",
+            "Deliveries — missing values: 14 \n",
+            "Customers — missing values: 20 \n",
+            "Drivers — missing values: 7 \n",
+            "Vehicles — missing values: 4 \n",
+            "Complaints — missing values: 16 \n",
+            "Incidents — missing values: 17 \n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "colSums(is.na(deliveries))\n",
+        "colSums(is.na(customers))\n",
+        "colSums(is.na(drivers))\n",
+        "colSums(is.na(vehicles))\n",
+        "colSums(is.na(complaints))\n",
+        "colSums(is.na(incidents))"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 208
+        },
+        "id": "nQ35IlXijnp_",
+        "outputId": "e68a7e4e-2786-4ac5-b745-f2d2f36cc09d"
+      },
+      "execution_count": 27,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<style>\n",
+              ".dl-inline {width: auto; margin:0; padding: 0}\n",
+              ".dl-inline>dt, .dl-inline>dd {float: none; width: auto; display: inline-block}\n",
+              ".dl-inline>dt::after {content: \":\\0020\"; padding-right: .5ex}\n",
+              ".dl-inline>dt:not(:first-of-type) {padding-left: .5ex}\n",
+              "</style><dl class=dl-inline><dt>delivery_id</dt><dd>0</dd><dt>order_id</dt><dd>0</dd><dt>driver_id</dt><dd>0</dd><dt>vehicle_id</dt><dd>0</dd><dt>hub_id</dt><dd>0</dd><dt>dispatch_time</dt><dd>0</dd><dt>delivery_completed_at</dt><dd>0</dd><dt>delivery_status</dt><dd>0</dd><dt>route_distance_km</dt><dd>0</dd><dt>manual_route_override_count</dt><dd>0</dd><dt>proof_of_completion_missing</dt><dd>0</dd><dt>customer_rating_post_delivery</dt><dd>14</dd><dt>fuel_or_charge_cost</dt><dd>0</dd><dt>pickup_zone</dt><dd>0</dd></dl>\n"
+            ],
+            "text/markdown": "delivery_id\n:   0order_id\n:   0driver_id\n:   0vehicle_id\n:   0hub_id\n:   0dispatch_time\n:   0delivery_completed_at\n:   0delivery_status\n:   0route_distance_km\n:   0manual_route_override_count\n:   0proof_of_completion_missing\n:   0customer_rating_post_delivery\n:   14fuel_or_charge_cost\n:   0pickup_zone\n:   0\n\n",
+            "text/latex": "\\begin{description*}\n\\item[delivery\\textbackslash{}\\_id] 0\n\\item[order\\textbackslash{}\\_id] 0\n\\item[driver\\textbackslash{}\\_id] 0\n\\item[vehicle\\textbackslash{}\\_id] 0\n\\item[hub\\textbackslash{}\\_id] 0\n\\item[dispatch\\textbackslash{}\\_time] 0\n\\item[delivery\\textbackslash{}\\_completed\\textbackslash{}\\_at] 0\n\\item[delivery\\textbackslash{}\\_status] 0\n\\item[route\\textbackslash{}\\_distance\\textbackslash{}\\_km] 0\n\\item[manual\\textbackslash{}\\_route\\textbackslash{}\\_override\\textbackslash{}\\_count] 0\n\\item[proof\\textbackslash{}\\_of\\textbackslash{}\\_completion\\textbackslash{}\\_missing] 0\n\\item[customer\\textbackslash{}\\_rating\\textbackslash{}\\_post\\textbackslash{}\\_delivery] 14\n\\item[fuel\\textbackslash{}\\_or\\textbackslash{}\\_charge\\textbackslash{}\\_cost] 0\n\\item[pickup\\textbackslash{}\\_zone] 0\n\\end{description*}\n",
+            "text/plain": [
+              "                  delivery_id                      order_id \n",
+              "                            0                             0 \n",
+              "                    driver_id                    vehicle_id \n",
+              "                            0                             0 \n",
+              "                       hub_id                 dispatch_time \n",
+              "                            0                             0 \n",
+              "        delivery_completed_at               delivery_status \n",
+              "                            0                             0 \n",
+              "            route_distance_km   manual_route_override_count \n",
+              "                            0                             0 \n",
+              "  proof_of_completion_missing customer_rating_post_delivery \n",
+              "                            0                            14 \n",
+              "          fuel_or_charge_cost                   pickup_zone \n",
+              "                            0                             0 "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<style>\n",
+              ".dl-inline {width: auto; margin:0; padding: 0}\n",
+              ".dl-inline>dt, .dl-inline>dd {float: none; width: auto; display: inline-block}\n",
+              ".dl-inline>dt::after {content: \":\\0020\"; padding-right: .5ex}\n",
+              ".dl-inline>dt:not(:first-of-type) {padding-left: .5ex}\n",
+              "</style><dl class=dl-inline><dt>customer_id</dt><dd>0</dd><dt>age</dt><dd>0</dd><dt>home_zone</dt><dd>0</dd><dt>customer_type</dt><dd>0</dd><dt>signup_date</dt><dd>0</dd><dt>loyalty_score</dt><dd>20</dd><dt>app_engagement_score</dt><dd>0</dd><dt>preferred_channel</dt><dd>0</dd><dt>account_status</dt><dd>0</dd></dl>\n"
+            ],
+            "text/markdown": "customer_id\n:   0age\n:   0home_zone\n:   0customer_type\n:   0signup_date\n:   0loyalty_score\n:   20app_engagement_score\n:   0preferred_channel\n:   0account_status\n:   0\n\n",
+            "text/latex": "\\begin{description*}\n\\item[customer\\textbackslash{}\\_id] 0\n\\item[age] 0\n\\item[home\\textbackslash{}\\_zone] 0\n\\item[customer\\textbackslash{}\\_type] 0\n\\item[signup\\textbackslash{}\\_date] 0\n\\item[loyalty\\textbackslash{}\\_score] 20\n\\item[app\\textbackslash{}\\_engagement\\textbackslash{}\\_score] 0\n\\item[preferred\\textbackslash{}\\_channel] 0\n\\item[account\\textbackslash{}\\_status] 0\n\\end{description*}\n",
+            "text/plain": [
+              "         customer_id                  age            home_zone \n",
+              "                   0                    0                    0 \n",
+              "       customer_type          signup_date        loyalty_score \n",
+              "                   0                    0                   20 \n",
+              "app_engagement_score    preferred_channel       account_status \n",
+              "                   0                    0                    0 "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<style>\n",
+              ".dl-inline {width: auto; margin:0; padding: 0}\n",
+              ".dl-inline>dt, .dl-inline>dd {float: none; width: auto; display: inline-block}\n",
+              ".dl-inline>dt::after {content: \":\\0020\"; padding-right: .5ex}\n",
+              ".dl-inline>dt:not(:first-of-type) {padding-left: .5ex}\n",
+              "</style><dl class=dl-inline><dt>driver_id</dt><dd>0</dd><dt>base_zone</dt><dd>0</dd><dt>employment_type</dt><dd>0</dd><dt>years_experience</dt><dd>0</dd><dt>training_score</dt><dd>7</dd><dt>driver_rating</dt><dd>0</dd><dt>shift_preference</dt><dd>0</dd><dt>active_flag</dt><dd>0</dd></dl>\n"
+            ],
+            "text/markdown": "driver_id\n:   0base_zone\n:   0employment_type\n:   0years_experience\n:   0training_score\n:   7driver_rating\n:   0shift_preference\n:   0active_flag\n:   0\n\n",
+            "text/latex": "\\begin{description*}\n\\item[driver\\textbackslash{}\\_id] 0\n\\item[base\\textbackslash{}\\_zone] 0\n\\item[employment\\textbackslash{}\\_type] 0\n\\item[years\\textbackslash{}\\_experience] 0\n\\item[training\\textbackslash{}\\_score] 7\n\\item[driver\\textbackslash{}\\_rating] 0\n\\item[shift\\textbackslash{}\\_preference] 0\n\\item[active\\textbackslash{}\\_flag] 0\n\\end{description*}\n",
+            "text/plain": [
+              "       driver_id        base_zone  employment_type years_experience \n",
+              "               0                0                0                0 \n",
+              "  training_score    driver_rating shift_preference      active_flag \n",
+              "               7                0                0                0 "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<style>\n",
+              ".dl-inline {width: auto; margin:0; padding: 0}\n",
+              ".dl-inline>dt, .dl-inline>dd {float: none; width: auto; display: inline-block}\n",
+              ".dl-inline>dt::after {content: \":\\0020\"; padding-right: .5ex}\n",
+              ".dl-inline>dt:not(:first-of-type) {padding-left: .5ex}\n",
+              "</style><dl class=dl-inline><dt>vehicle_id</dt><dd>0</dd><dt>vehicle_type</dt><dd>0</dd><dt>assigned_zone</dt><dd>0</dd><dt>commission_date</dt><dd>0</dd><dt>battery_health_pct</dt><dd>4</dd><dt>odometer_km</dt><dd>0</dd><dt>maintenance_status</dt><dd>0</dd><dt>telematics_version</dt><dd>0</dd></dl>\n"
+            ],
+            "text/markdown": "vehicle_id\n:   0vehicle_type\n:   0assigned_zone\n:   0commission_date\n:   0battery_health_pct\n:   4odometer_km\n:   0maintenance_status\n:   0telematics_version\n:   0\n\n",
+            "text/latex": "\\begin{description*}\n\\item[vehicle\\textbackslash{}\\_id] 0\n\\item[vehicle\\textbackslash{}\\_type] 0\n\\item[assigned\\textbackslash{}\\_zone] 0\n\\item[commission\\textbackslash{}\\_date] 0\n\\item[battery\\textbackslash{}\\_health\\textbackslash{}\\_pct] 4\n\\item[odometer\\textbackslash{}\\_km] 0\n\\item[maintenance\\textbackslash{}\\_status] 0\n\\item[telematics\\textbackslash{}\\_version] 0\n\\end{description*}\n",
+            "text/plain": [
+              "        vehicle_id       vehicle_type      assigned_zone    commission_date \n",
+              "                 0                  0                  0                  0 \n",
+              "battery_health_pct        odometer_km maintenance_status telematics_version \n",
+              "                 4                  0                  0                  0 "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<style>\n",
+              ".dl-inline {width: auto; margin:0; padding: 0}\n",
+              ".dl-inline>dt, .dl-inline>dd {float: none; width: auto; display: inline-block}\n",
+              ".dl-inline>dt::after {content: \":\\0020\"; padding-right: .5ex}\n",
+              ".dl-inline>dt:not(:first-of-type) {padding-left: .5ex}\n",
+              "</style><dl class=dl-inline><dt>complaint_id</dt><dd>0</dd><dt>customer_id</dt><dd>0</dd><dt>order_id</dt><dd>0</dd><dt>complaint_type</dt><dd>0</dd><dt>channel</dt><dd>0</dd><dt>severity</dt><dd>0</dd><dt>created_at</dt><dd>0</dd><dt>status</dt><dd>0</dd><dt>resolution_days</dt><dd>0</dd><dt>compensation_amount</dt><dd>16</dd></dl>\n"
+            ],
+            "text/markdown": "complaint_id\n:   0customer_id\n:   0order_id\n:   0complaint_type\n:   0channel\n:   0severity\n:   0created_at\n:   0status\n:   0resolution_days\n:   0compensation_amount\n:   16\n\n",
+            "text/latex": "\\begin{description*}\n\\item[complaint\\textbackslash{}\\_id] 0\n\\item[customer\\textbackslash{}\\_id] 0\n\\item[order\\textbackslash{}\\_id] 0\n\\item[complaint\\textbackslash{}\\_type] 0\n\\item[channel] 0\n\\item[severity] 0\n\\item[created\\textbackslash{}\\_at] 0\n\\item[status] 0\n\\item[resolution\\textbackslash{}\\_days] 0\n\\item[compensation\\textbackslash{}\\_amount] 16\n\\end{description*}\n",
+            "text/plain": [
+              "       complaint_id         customer_id            order_id      complaint_type \n",
+              "                  0                   0                   0                   0 \n",
+              "            channel            severity          created_at              status \n",
+              "                  0                   0                   0                   0 \n",
+              "    resolution_days compensation_amount \n",
+              "                  0                  16 "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<style>\n",
+              ".dl-inline {width: auto; margin:0; padding: 0}\n",
+              ".dl-inline>dt, .dl-inline>dd {float: none; width: auto; display: inline-block}\n",
+              ".dl-inline>dt::after {content: \":\\0020\"; padding-right: .5ex}\n",
+              ".dl-inline>dt:not(:first-of-type) {padding-left: .5ex}\n",
+              "</style><dl class=dl-inline><dt>incident_id</dt><dd>0</dd><dt>delivery_id</dt><dd>0</dd><dt>incident_type</dt><dd>0</dd><dt>reported_at</dt><dd>0</dd><dt>severity</dt><dd>0</dd><dt>resolution_status</dt><dd>0</dd><dt>resolved_hours</dt><dd>17</dd></dl>\n"
+            ],
+            "text/markdown": "incident_id\n:   0delivery_id\n:   0incident_type\n:   0reported_at\n:   0severity\n:   0resolution_status\n:   0resolved_hours\n:   17\n\n",
+            "text/latex": "\\begin{description*}\n\\item[incident\\textbackslash{}\\_id] 0\n\\item[delivery\\textbackslash{}\\_id] 0\n\\item[incident\\textbackslash{}\\_type] 0\n\\item[reported\\textbackslash{}\\_at] 0\n\\item[severity] 0\n\\item[resolution\\textbackslash{}\\_status] 0\n\\item[resolved\\textbackslash{}\\_hours] 17\n\\end{description*}\n",
+            "text/plain": [
+              "      incident_id       delivery_id     incident_type       reported_at \n",
+              "                0                 0                 0                 0 \n",
+              "         severity resolution_status    resolved_hours \n",
+              "                0                 0                17 "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 7. Missing Value Treatment\n",
+        "\n",
+        "### Purpose\n",
+        "Handle missing values using replacement and imputation methods.\n",
+        "\n",
+        "#### Methods Applied\n",
+        "- Categorical replacement\n",
+        "- Median imputation\n",
+        "- Missingness flags"
+      ],
+      "metadata": {
+        "id": "Sz7tWMSokP_w"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# Categorical fields\n",
+        "deliveries$delivery_status[is.na(deliveries$delivery_status)] <- \"Unknown\"\n",
+        "deliveries$pickup_zone[is.na(deliveries$pickup_zone)] <- \"Unknown\"\n",
+        "complaints$channel[is.na(complaints$channel)] <- \"Unknown\"\n",
+        "vehicles$maintenance_status[is.na(vehicles$maintenance_status)] <- \"Unknown\"\n",
+        "\n",
+        "# Numeric fields\n",
+        "deliveries$route_distance_km[is.na(deliveries$route_distance_km)] <- median(deliveries$route_distance_km, na.rm = TRUE)\n",
+        "deliveries$fuel_or_charge_cost[is.na(deliveries$fuel_or_charge_cost)] <- median(deliveries$fuel_or_charge_cost, na.rm = TRUE)\n",
+        "complaints$compensation_amount[is.na(complaints$compensation_amount)] <- median(complaints$compensation_amount, na.rm = TRUE)\n",
+        "\n",
+        "# Missingness flags\n",
+        "deliveries$distance_missing_flag <- ifelse(is.na(deliveries$route_distance_km), 1, 0)\n",
+        "complaints$comp_missing_flag <- ifelse(is.na(complaints$compensation_amount), 1, 0)"
+      ],
+      "metadata": {
+        "id": "f7Cx3pAdkSN9"
+      },
+      "execution_count": 28,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 8. Duplicate Record Analysis\n",
+        "\n",
+        "### Purpose\n",
+        "Check datasets for duplicate records and ensure uniqueness."
+      ],
+      "metadata": {
+        "id": "VoT4ZW-sRcST"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "duplicate_check <- function(df, name) {\n",
+        "  dup_count <- sum(duplicated(df))\n",
+        "  cat(name, \"— duplicate rows:\", dup_count, \"\\n\")\n",
+        "}\n",
+        "\n",
+        "duplicate_check(orders, \"Orders\")\n",
+        "duplicate_check(deliveries, \"Deliveries\")\n",
+        "duplicate_check(customers, \"Customers\")\n",
+        "duplicate_check(complaints, \"Complaints\")\n",
+        "duplicate_check(incidents, \"Incidents\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "QKCtuLfkRZdI",
+        "outputId": "b057d6e9-ce57-45ba-aa2b-14e8cf19503d"
+      },
+      "execution_count": 29,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Orders — duplicate rows: 0 \n",
+            "Deliveries — duplicate rows: 0 \n",
+            "Customers — duplicate rows: 0 \n",
+            "Complaints — duplicate rows: 0 \n",
+            "Incidents — duplicate rows: 0 \n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 9. Descriptive Statistical Analysis\n",
+        "\n",
+        "### Purpose\n",
+        "Generate summary statistics for key operational variables."
+      ],
+      "metadata": {
+        "id": "XRE03C4RS9TF"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "cat(\"=== ORDERS SUMMARY ===\\n\")\n",
+        "summary(orders[, c(\"order_value\", \"promised_window_hours\")])\n",
+        "\n",
+        "cat(\"\\n=== DELIVERIES SUMMARY ===\\n\")\n",
+        "summary(deliveries[, c(\"route_distance_km\", \"fuel_or_charge_cost\",\n",
+        "                        \"customer_rating_post_delivery\",\n",
+        "                        \"manual_route_override_count\")])\n",
+        "\n",
+        "cat(\"\\n=== COMPLAINTS SUMMARY ===\\n\")\n",
+        "summary(complaints[, c(\"resolution_days\", \"compensation_amount\")])"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 625
+        },
+        "id": "wXBkERLSS93Q",
+        "outputId": "6bffbec5-2a8d-4d41-9c3f-0e6e2f320137"
+      },
+      "execution_count": 30,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "=== ORDERS SUMMARY ===\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "  order_value     promised_window_hours\n",
+              " Min.   :  2.04   Min.   : 1.000       \n",
+              " 1st Qu.: 47.91   1st Qu.: 4.000       \n",
+              " Median : 76.53   Median : 6.000       \n",
+              " Mean   : 91.05   Mean   : 7.622       \n",
+              " 3rd Qu.:121.10   3rd Qu.:12.000       \n",
+              " Max.   :510.06   Max.   :24.000       "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "\n",
+            "=== DELIVERIES SUMMARY ===\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              " route_distance_km fuel_or_charge_cost customer_rating_post_delivery\n",
+              " Min.   : 1.200    Min.   : 2.500      Min.   :1.000                \n",
+              " 1st Qu.: 9.135    1st Qu.: 9.925      1st Qu.:3.360                \n",
+              " Median :12.840    Median :12.645      Median :4.040                \n",
+              " Mean   :13.909    Mean   :12.841      Mean   :3.865                \n",
+              " 3rd Qu.:16.835    3rd Qu.:15.697      3rd Qu.:4.550                \n",
+              " Max.   :41.940    Max.   :29.430      Max.   :5.000                \n",
+              "                                       NAs    :14                   \n",
+              " manual_route_override_count\n",
+              " Min.   :0.0000             \n",
+              " 1st Qu.:0.0000             \n",
+              " Median :1.0000             \n",
+              " Mean   :0.9695             \n",
+              " 3rd Qu.:2.0000             \n",
+              " Max.   :7.0000             \n",
+              "                            "
+            ]
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "\n",
+            "=== COMPLAINTS SUMMARY ===\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              " resolution_days  compensation_amount\n",
+              " Min.   : 1.000   Min.   : 0.00      \n",
+              " 1st Qu.: 3.750   1st Qu.: 9.12      \n",
+              " Median : 7.000   Median :18.41      \n",
+              " Mean   : 7.928   Mean   :20.16      \n",
+              " 3rd Qu.:11.000   3rd Qu.:27.95      \n",
+              " Max.   :25.000   Max.   :61.85      "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "cat(\"=== UNIQUE ZONE VALUES (orders - pickup_zone) ===\\n\")\n",
+        "print(unique(orders$pickup_zone))\n",
+        "\n",
+        "cat(\"\\n=== UNIQUE ZONE VALUES (drivers - base_zone) ===\\n\")\n",
+        "print(unique(drivers$base_zone))\n",
+        "\n",
+        "cat(\"\\n=== UNIQUE MAINTENANCE STATUS (vehicles) ===\\n\")\n",
+        "print(unique(vehicles$maintenance_status))\n",
+        "\n",
+        "cat(\"\\n=== UNIQUE DELIVERY STATUS (deliveries) ===\\n\")\n",
+        "print(unique(deliveries$delivery_status))"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "CwiOHiCA3OYK",
+        "outputId": "7925344d-6f08-4d52-a873-3d285d5c233b"
+      },
+      "execution_count": 31,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "=== UNIQUE ZONE VALUES (orders - pickup_zone) ===\n",
+            "[1] \"AIRPORT\"   \"NORTH\"     \"WEST\"      \"RIVERSIDE\" \"CENTRAL\"   \"SOUTH\"    \n",
+            "[7] \"EAST\"     \n",
+            "\n",
+            "=== UNIQUE ZONE VALUES (drivers - base_zone) ===\n",
+            "[1] \"AIRPORT\"   \"CENTRAL\"   \"NORTH\"     \"SOUTH\"     \"WEST\"      \"EAST\"     \n",
+            "[7] \"RIVERSIDE\"\n",
+            "\n",
+            "=== UNIQUE MAINTENANCE STATUS (vehicles) ===\n",
+            "[1] \"ACTIVE\"    \"INREPAIR\"  \"SCHEDULED\"\n",
+            "\n",
+            "=== UNIQUE DELIVERY STATUS (deliveries) ===\n",
+            "[1] \"Failed\"  \"OnTime\"  \"Delayed\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## 10. SQL Operations within R"
+      ],
+      "metadata": {
+        "id": "4OTZiHMIhS7w"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "install.packages(c('sqldf','ggplot2','dplyr','tidyr','lubridate','scales'))\n",
+        "library(sqldf)\n",
+        "library(ggplot2)\n",
+        "library(dplyr)\n",
+        "library(tidyr)\n",
+        "library(lubridate)\n",
+        "library(scales)\n",
+        "\n",
+        "customers  <- read.csv('customers.csv', stringsAsFactors = FALSE)\n",
+        "orders     <- read.csv('orders.csv', stringsAsFactors = FALSE)\n",
+        "deliveries <- read.csv('deliveries.csv', stringsAsFactors = FALSE)\n",
+        "drivers    <- read.csv('drivers.csv', stringsAsFactors = FALSE)\n",
+        "vehicles   <- read.csv('vehicles.csv', stringsAsFactors = FALSE)\n",
+        "hubs       <- read.csv('hubs.csv', stringsAsFactors = FALSE)\n",
+        "complaints <- read.csv('complaints.csv', stringsAsFactors = FALSE)\n",
+        "incidents  <- read.csv('incidents.csv', stringsAsFactors = FALSE)\n",
+        "app_events <- read.csv('app_events.csv', stringsAsFactors = FALSE)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "3PvwMzfuhUfx",
+        "outputId": "72920cd9-44e5-4c5a-97cc-6897172a8953"
+      },
+      "execution_count": 32,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "Installing packages into ‘/usr/local/lib/R/site-library’\n",
+            "(as ‘lib’ is unspecified)\n",
+            "\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## CRUD Operations in R\n",
+        "\n",
+        "This section demonstrates Create, Read, Update, and Delete operations using SQL logic within R."
+      ],
+      "metadata": {
+        "id": "fxLSXxYpm3Tn"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Create Operation\n",
+        "\n",
+        "#### Purpose\n",
+        "Insert a temporary order record into the dataset."
+      ],
+      "metadata": {
+        "id": "_egafim-m4oA"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "new_order <- data.frame(\n",
+        "  order_id = \"O2001\",\n",
+        "  customer_id = \"C0120\",\n",
+        "  service_type = \"Parcel\",\n",
+        "  order_created_at = \"2026-04-18 09:30:00\",\n",
+        "  promised_window_hours = 4,\n",
+        "  pickup_zone = \"NORTH\",\n",
+        "  dropoff_zone = \"CENTRAL\",\n",
+        "  priority_level = \"High\",\n",
+        "  order_value = 84.50,\n",
+        "  booking_channel = \"App\",\n",
+        "  special_handling_flag = 1\n",
+        ")\n",
+        "\n",
+        "orders <- rbind(orders, new_order)\n",
+        "\n",
+        "sqldf(\"\n",
+        "SELECT order_id, customer_id, service_type, order_value\n",
+        "FROM orders\n",
+        "WHERE order_id = 'O2001'\n",
+        "\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 129
+        },
+        "id": "4iJ3bHvKm6zx",
+        "outputId": "70fe8aba-3c3c-4b10-e8cb-a23cee0c7136"
+      },
+      "execution_count": 33,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 1 × 4</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>order_id</th><th scope=col>customer_id</th><th scope=col>service_type</th><th scope=col>order_value</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;dbl&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>O2001</td><td>C0120</td><td>Parcel</td><td>84.5</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 1 × 4\n\n| order_id &lt;chr&gt; | customer_id &lt;chr&gt; | service_type &lt;chr&gt; | order_value &lt;dbl&gt; |\n|---|---|---|---|\n| O2001 | C0120 | Parcel | 84.5 |\n\n",
+            "text/latex": "A data.frame: 1 × 4\n\\begin{tabular}{llll}\n order\\_id & customer\\_id & service\\_type & order\\_value\\\\\n <chr> & <chr> & <chr> & <dbl>\\\\\n\\hline\n\t O2001 & C0120 & Parcel & 84.5\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  order_id customer_id service_type order_value\n",
+              "1 O2001    C0120       Parcel       84.5       "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Read Operation\n",
+        "\n",
+        "#### Purpose\n",
+        "Retrieve filtered operational records using SQL queries."
+      ],
+      "metadata": {
+        "id": "lb5st-iho7vP"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "sqldf(\"\n",
+        "SELECT order_id, service_type, priority_level, order_value\n",
+        "FROM orders\n",
+        "WHERE order_value > 150\n",
+        "  AND booking_channel = 'App'\n",
+        "ORDER BY order_value DESC\n",
+        "LIMIT 2\n",
+        "\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 161
+        },
+        "id": "Ifgfb_Foo_pc",
+        "outputId": "ae2db8b4-8761-4d42-c946-c762959b9d46"
+      },
+      "execution_count": 34,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 2 × 4</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>order_id</th><th scope=col>service_type</th><th scope=col>priority_level</th><th scope=col>order_value</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;dbl&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>O00980</td><td>Parcel</td><td>Medium</td><td>510.06</td></tr>\n",
+              "\t<tr><td>O00529</td><td>Retail</td><td>Medium</td><td>355.62</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 2 × 4\n\n| order_id &lt;chr&gt; | service_type &lt;chr&gt; | priority_level &lt;chr&gt; | order_value &lt;dbl&gt; |\n|---|---|---|---|\n| O00980 | Parcel | Medium | 510.06 |\n| O00529 | Retail | Medium | 355.62 |\n\n",
+            "text/latex": "A data.frame: 2 × 4\n\\begin{tabular}{llll}\n order\\_id & service\\_type & priority\\_level & order\\_value\\\\\n <chr> & <chr> & <chr> & <dbl>\\\\\n\\hline\n\t O00980 & Parcel & Medium & 510.06\\\\\n\t O00529 & Retail & Medium & 355.62\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  order_id service_type priority_level order_value\n",
+              "1 O00980   Parcel       Medium         510.06     \n",
+              "2 O00529   Retail       Medium         355.62     "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Update Operation\n",
+        "\n",
+        "#### Purpose\n",
+        "Create escalation flags for unresolved complaints."
+      ],
+      "metadata": {
+        "id": "zLYSddXxqAJq"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "complaints$service_flag <- ifelse(\n",
+        "  complaints$resolution_days > 14 & complaints$status != \"Closed\",\n",
+        "  \"NeedsEscalation\",\n",
+        "  \"Normal\"\n",
+        ")\n",
+        "\n",
+        "sqldf(\"\n",
+        "SELECT service_flag, COUNT(*) AS total_cases\n",
+        "FROM complaints\n",
+        "GROUP BY service_flag\n",
+        "\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 161
+        },
+        "id": "90NhKrCJp_Ch",
+        "outputId": "78074d1b-47e5-4a8f-ae44-a8e0dfb3bd8b"
+      },
+      "execution_count": 35,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 2 × 2</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>service_flag</th><th scope=col>total_cases</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;int&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>NeedsEscalation</td><td> 34</td></tr>\n",
+              "\t<tr><td>Normal         </td><td>286</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 2 × 2\n\n| service_flag &lt;chr&gt; | total_cases &lt;int&gt; |\n|---|---|\n| NeedsEscalation |  34 |\n| Normal          | 286 |\n\n",
+            "text/latex": "A data.frame: 2 × 2\n\\begin{tabular}{ll}\n service\\_flag & total\\_cases\\\\\n <chr> & <int>\\\\\n\\hline\n\t NeedsEscalation &  34\\\\\n\t Normal          & 286\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  service_flag    total_cases\n",
+              "1 NeedsEscalation  34        \n",
+              "2 Normal          286        "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "### Delete Operation\n",
+        "\n",
+        "#### Purpose\n",
+        "Remove temporary records and restore dataset structure."
+      ],
+      "metadata": {
+        "id": "bI9TeUCgsfO7"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "orders <- orders[orders$order_id != \"O2001\", ]\n",
+        "\n",
+        "sqldf(\"\n",
+        "SELECT COUNT(*) AS remaining_orders\n",
+        "FROM orders\n",
+        "\")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 129
+        },
+        "id": "xmdUcQ1LsfxD",
+        "outputId": "80b0e14a-feed-42b0-c1d6-cf7baee6f041"
+      },
+      "execution_count": 36,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 1 × 1</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>remaining_orders</th></tr>\n",
+              "\t<tr><th scope=col>&lt;int&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>1250</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 1 × 1\n\n| remaining_orders &lt;int&gt; |\n|---|\n| 1250 |\n\n",
+            "text/latex": "A data.frame: 1 × 1\n\\begin{tabular}{l}\n remaining\\_orders\\\\\n <int>\\\\\n\\hline\n\t 1250\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  remaining_orders\n",
+              "1 1250            "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Mathematical Analysis\n",
+        "\n",
+        "This section applies mathematical and aggregation functions using SQL within R to evaluate operational efficiency, delivery performance, customer satisfaction, and service reliability..\n"
+      ],
+      "metadata": {
+        "id": "h7jfS9R2zkAW"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Mathematical Functions\n",
+        "\n",
+        "Basic mathematical SQL functions are used to calculate averages, ratios, and delivery metrics across operational datasets."
+      ],
+      "metadata": {
+        "id": "Bamkw-W7DbCG"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Average Delivery Cost\n",
+        "\n",
+        "The average fuel or charging cost per delivery is calculated using the `AVG()` aggregation function.\n",
+        "\n",
+        "### Objective\n",
+        "To measure the average operational delivery cost across all completed deliveries."
+      ],
+      "metadata": {
+        "id": "Wc3y7NWXzrVG"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "install.packages('sqldf')\n",
+        "library(sqldf)\n",
+        "sqldf(\n",
+        "\"SELECT AVG(fuel_or_charge_cost) AS avg_delivery_cost\n",
+        "FROM deliveries;\"\n",
+        ")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 182
+        },
+        "id": "I6D3lqMmzq49",
+        "outputId": "39192ef4-7099-4f46-a0de-c19b951e1d57"
+      },
+      "execution_count": 37,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": [
+            "Installing package into ‘/usr/local/lib/R/site-library’\n",
+            "(as ‘lib’ is unspecified)\n",
+            "\n"
+          ]
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 1 × 1</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>avg_delivery_cost</th></tr>\n",
+              "\t<tr><th scope=col>&lt;dbl&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>12.84129</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 1 × 1\n\n| avg_delivery_cost &lt;dbl&gt; |\n|---|\n| 12.84129 |\n\n",
+            "text/latex": "A data.frame: 1 × 1\n\\begin{tabular}{l}\n avg\\_delivery\\_cost\\\\\n <dbl>\\\\\n\\hline\n\t 12.84129\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  avg_delivery_cost\n",
+              "1 12.84129         "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Total Number of Delayed Deliveries\n",
+        "\n",
+        "The total number of deliveries marked as `\"Delayed\"` is calculated using the `COUNT()` function.\n",
+        "\n",
+        "### Objective\n",
+        "To quantify delayed operational activities within the delivery system."
+      ],
+      "metadata": {
+        "id": "k0IM-7H43Vol"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "sqldf(\n",
+        "\"SELECT COUNT(*) AS total_delayed\n",
+        "FROM deliveries\n",
+        "WHERE delivery_status = 'Delayed';\"\n",
+        ")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 147
+        },
+        "id": "eLOGCvz13WeP",
+        "outputId": "71bbca9d-803f-4e3d-e743-e74b9170f8af"
+      },
+      "execution_count": 38,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 1 × 1</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>total_delayed</th></tr>\n",
+              "\t<tr><th scope=col>&lt;int&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>202</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 1 × 1\n\n| total_delayed &lt;int&gt; |\n|---|\n| 202 |\n\n",
+            "text/latex": "A data.frame: 1 × 1\n\\begin{tabular}{l}\n total\\_delayed\\\\\n <int>\\\\\n\\hline\n\t 202\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  total_delayed\n",
+              "1 202          "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Cost per Distance Ratio\n",
+        "\n",
+        "A delivery-level cost efficiency ratio is calculated by dividing fuel or charging cost by route distance.\n",
+        "\n",
+        "### Formula Used\n",
+        "\n",
+        ":contentReference[oaicite:0]{index=0}\n",
+        "\n",
+        "### Objective\n",
+        "To evaluate transport efficiency and operational cost performance."
+      ],
+      "metadata": {
+        "id": "b9XTXQk_3cL4"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "sqldf(\n",
+        "\"SELECT order_id,\n",
+        "       fuel_or_charge_cost / NULLIF(route_distance_km, 0) AS cost_per_km\n",
+        "FROM deliveries LIMIT 3;\"\n",
+        ")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 192
+        },
+        "id": "GLOr9Hzn3cxp",
+        "outputId": "a6e68329-0830-4ed7-f1aa-8d1b191e85ac"
+      },
+      "execution_count": 39,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 3 × 2</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>order_id</th><th scope=col>cost_per_km</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;dbl&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>O00938</td><td>0.698146</td></tr>\n",
+              "\t<tr><td>O00004</td><td>1.296905</td></tr>\n",
+              "\t<tr><td>O00639</td><td>1.074495</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 3 × 2\n\n| order_id &lt;chr&gt; | cost_per_km &lt;dbl&gt; |\n|---|---|\n| O00938 | 0.698146 |\n| O00004 | 1.296905 |\n| O00639 | 1.074495 |\n\n",
+            "text/latex": "A data.frame: 3 × 2\n\\begin{tabular}{ll}\n order\\_id & cost\\_per\\_km\\\\\n <chr> & <dbl>\\\\\n\\hline\n\t O00938 & 0.698146\\\\\n\t O00004 & 1.296905\\\\\n\t O00639 & 1.074495\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  order_id cost_per_km\n",
+              "1 O00938   0.698146   \n",
+              "2 O00004   1.296905   \n",
+              "3 O00639   1.074495   "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Aggregation Functions\n",
+        "\n",
+        "Aggregation queries are used to summarise operational performance across hubs, service types, and delivery regions."
+      ],
+      "metadata": {
+        "id": "W-_eFSgkD0i0"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Average Delay by Hub\n",
+        "\n",
+        "Average delivery delay time is calculated for each operational hub using timestamp differences between dispatch and completion times.\n",
+        "\n",
+        "### Objective\n",
+        "To identify hubs experiencing the highest operational delays."
+      ],
+      "metadata": {
+        "id": "6iJXIDRN5VBD"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "sqldf(\n",
+        "\"SELECT d.hub_id,\n",
+        "       AVG((julianday(d.delivery_completed_at) - julianday(d.dispatch_time)) * 1440 - (o.promised_window_hours * 60)) AS avg_delay_minutes\n",
+        "FROM deliveries d\n",
+        "JOIN orders o ON d.order_id = o.order_id\n",
+        "GROUP BY d.hub_id\n",
+        "ORDER BY avg_delay_minutes DESC\n",
+        "LIMIT 5;\"\n",
+        ")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 255
+        },
+        "id": "klkL_ndI5V2v",
+        "outputId": "69e92544-4ef5-4543-aed3-ff5034aef6fb"
+      },
+      "execution_count": 40,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 5 × 2</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>hub_id</th><th scope=col>avg_delay_minutes</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;dbl&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>H05</td><td>180.0375</td></tr>\n",
+              "\t<tr><td>H06</td><td>150.5580</td></tr>\n",
+              "\t<tr><td>H08</td><td>142.4840</td></tr>\n",
+              "\t<tr><td>H04</td><td>115.6359</td></tr>\n",
+              "\t<tr><td>H02</td><td>106.1991</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 5 × 2\n\n| hub_id &lt;chr&gt; | avg_delay_minutes &lt;dbl&gt; |\n|---|---|\n| H05 | 180.0375 |\n| H06 | 150.5580 |\n| H08 | 142.4840 |\n| H04 | 115.6359 |\n| H02 | 106.1991 |\n\n",
+            "text/latex": "A data.frame: 5 × 2\n\\begin{tabular}{ll}\n hub\\_id & avg\\_delay\\_minutes\\\\\n <chr> & <dbl>\\\\\n\\hline\n\t H05 & 180.0375\\\\\n\t H06 & 150.5580\\\\\n\t H08 & 142.4840\\\\\n\t H04 & 115.6359\\\\\n\t H02 & 106.1991\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  hub_id avg_delay_minutes\n",
+              "1 H05    180.0375         \n",
+              "2 H06    150.5580         \n",
+              "3 H08    142.4840         \n",
+              "4 H04    115.6359         \n",
+              "5 H02    106.1991         "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Complaint Count by Service Type\n",
+        "\n",
+        "Customer complaints are aggregated by service category to determine which services generate the highest volume of operational issues.\n",
+        "\n",
+        "### Objective\n",
+        "To identify service categories with elevated customer dissatisfaction."
+      ],
+      "metadata": {
+        "id": "MQJKOunL5jDv"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "sqldf(\n",
+        "\"SELECT o.service_type,\n",
+        "       COUNT(c.complaint_id) AS complaint_count\n",
+        "FROM complaints c\n",
+        "JOIN orders o ON c.order_id = o.order_id\n",
+        "GROUP BY o.service_type\n",
+        "ORDER BY complaint_count DESC;\"\n",
+        ")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 255
+        },
+        "id": "7_0_uyge5lAh",
+        "outputId": "41d835ca-38ad-408a-dd99-002310b884db"
+      },
+      "execution_count": 41,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 5 × 2</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>service_type</th><th scope=col>complaint_count</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;int&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>Passenger</td><td>84</td></tr>\n",
+              "\t<tr><td>Retail   </td><td>83</td></tr>\n",
+              "\t<tr><td>Parcel   </td><td>77</td></tr>\n",
+              "\t<tr><td>Business </td><td>39</td></tr>\n",
+              "\t<tr><td>Medical  </td><td>37</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 5 × 2\n\n| service_type &lt;chr&gt; | complaint_count &lt;int&gt; |\n|---|---|\n| Passenger | 84 |\n| Retail    | 83 |\n| Parcel    | 77 |\n| Business  | 39 |\n| Medical   | 37 |\n\n",
+            "text/latex": "A data.frame: 5 × 2\n\\begin{tabular}{ll}\n service\\_type & complaint\\_count\\\\\n <chr> & <int>\\\\\n\\hline\n\t Passenger & 84\\\\\n\t Retail    & 83\\\\\n\t Parcel    & 77\\\\\n\t Business  & 39\\\\\n\t Medical   & 37\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  service_type complaint_count\n",
+              "1 Passenger    84             \n",
+              "2 Retail       83             \n",
+              "3 Parcel       77             \n",
+              "4 Business     39             \n",
+              "5 Medical      37             "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Mean Customer Rating by Region\n",
+        "\n",
+        "Average customer delivery ratings are calculated across operational zones.\n",
+        "\n",
+        "### Objective\n",
+        "To compare customer satisfaction levels between geographic regions."
+      ],
+      "metadata": {
+        "id": "ziRXEAbj5mYJ"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "sqldf(\n",
+        "\"SELECT h.zone,\n",
+        "       AVG(d.customer_rating_post_delivery) AS avg_rating\n",
+        "FROM deliveries d\n",
+        "JOIN hubs h ON d.hub_id = h.hub_id\n",
+        "GROUP BY h.zone\n",
+        "ORDER BY avg_rating DESC;\"\n",
+        ")"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 318
+        },
+        "id": "59S6GDAp5owR",
+        "outputId": "bb68b73c-5690-4c89-97fd-1b5f79e1de10"
+      },
+      "execution_count": 42,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 7 × 2</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>zone</th><th scope=col>avg_rating</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;dbl&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td>South    </td><td>3.950952</td></tr>\n",
+              "\t<tr><td>West     </td><td>3.915476</td></tr>\n",
+              "\t<tr><td>East     </td><td>3.895862</td></tr>\n",
+              "\t<tr><td>Airport  </td><td>3.882136</td></tr>\n",
+              "\t<tr><td>Riverside</td><td>3.881858</td></tr>\n",
+              "\t<tr><td>North    </td><td>3.840593</td></tr>\n",
+              "\t<tr><td>Central  </td><td>3.782479</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 7 × 2\n\n| zone &lt;chr&gt; | avg_rating &lt;dbl&gt; |\n|---|---|\n| South     | 3.950952 |\n| West      | 3.915476 |\n| East      | 3.895862 |\n| Airport   | 3.882136 |\n| Riverside | 3.881858 |\n| North     | 3.840593 |\n| Central   | 3.782479 |\n\n",
+            "text/latex": "A data.frame: 7 × 2\n\\begin{tabular}{ll}\n zone & avg\\_rating\\\\\n <chr> & <dbl>\\\\\n\\hline\n\t South     & 3.950952\\\\\n\t West      & 3.915476\\\\\n\t East      & 3.895862\\\\\n\t Airport   & 3.882136\\\\\n\t Riverside & 3.881858\\\\\n\t North     & 3.840593\\\\\n\t Central   & 3.782479\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  zone      avg_rating\n",
+              "1 South     3.950952  \n",
+              "2 West      3.915476  \n",
+              "3 East      3.895862  \n",
+              "4 Airport   3.882136  \n",
+              "5 Riverside 3.881858  \n",
+              "6 North     3.840593  \n",
+              "7 Central   3.782479  "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Analytical SQL Queries in R\n",
+        "\n",
+        "Advanced SQL queries are performed to identify operational inefficiencies, missing transactions, profitability issues, and service risks."
+      ],
+      "metadata": {
+        "id": "soKncCcBz2Sh"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Ghost Order Detection\n",
+        "\n",
+        "Orders without matching delivery records are identified using a `LEFT JOIN` operation.\n",
+        "\n",
+        "### Objective\n",
+        "To detect operational tracking failures and missing delivery execution records."
+      ],
+      "metadata": {
+        "id": "MiY3iPf_uhNq"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# ── Query 1: Ghost orders (orders with no delivery record) ───────────────\n",
+        "ghost_orders <- sqldf(\n",
+        "  \"SELECT o.order_id,\n",
+        "          o.service_type,\n",
+        "          o.pickup_zone,\n",
+        "          o.order_value,\n",
+        "          o.priority_level\n",
+        "   FROM orders o\n",
+        "   LEFT JOIN deliveries d ON o.order_id = d.order_id\n",
+        "   WHERE d.delivery_id IS NULL\n",
+        "   ORDER BY o.order_value DESC\"\n",
+        ")\n",
+        "cat('Ghost orders (no delivery record):', nrow(ghost_orders), '\\n')\n",
+        "cat('Ghost rate:', round(nrow(ghost_orders)/nrow(orders)*100,1), '%\\n')\n",
+        "# Service type breakdown of ghost orders\n",
+        "ghost_by_type <- sqldf(\n",
+        "  \"SELECT service_type, COUNT(*) AS count,\n",
+        "          ROUND(AVG(order_value),2) AS avg_value\n",
+        "   FROM ghost_orders GROUP BY service_type ORDER BY count DESC\"\n",
+        ")\n",
+        "print(ghost_by_type)\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "teFLLat0uiCL",
+        "outputId": "46beefdc-9939-44a4-e339-9edd4cb33689"
+      },
+      "execution_count": 43,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Ghost orders (no delivery record): 300 \n",
+            "Ghost rate: 24 %\n",
+            "  service_type count avg_value\n",
+            "1    Passenger    79     92.38\n",
+            "2       Parcel    78     80.13\n",
+            "3       Retail    73     99.85\n",
+            "4     Business    39     75.42\n",
+            "5      Medical    31     89.26\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Ghost Order Rate Analysis\n",
+        "\n",
+        "The percentage of ghost orders is calculated relative to the total number of orders.\n",
+        "\n",
+        "### Formula Used\n",
+        "\n",
+        ":contentReference[oaicite:1]{index=1}\n",
+        "\n",
+        "### Findings\n",
+        "- Total ghost orders identified: 300\n",
+        "- Ghost order rate: 24%"
+      ],
+      "metadata": {
+        "id": "cV85UdgwEXAP"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Service Type Breakdown of Ghost Orders\n",
+        "\n",
+        "Ghost orders are grouped by service category to determine which operational services are most affected by missing delivery records.\n"
+      ],
+      "metadata": {
+        "id": "hx7ZsoJEuvED"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# ── Query 2: Revenue and failure rate by service type ────────────────────\n",
+        "service_profit <- sqldf(\n",
+        "  \"SELECT o.service_type,\n",
+        "          COUNT(o.order_id)                              AS total_orders,\n",
+        "          ROUND(SUM(o.order_value), 2)                   AS total_revenue,\n",
+        "          ROUND(AVG(o.order_value), 2)                   AS avg_order_value,\n",
+        "          ROUND(SUM(d.fuel_or_charge_cost), 2)           AS total_fuel_cost,\n",
+        "          SUM(CASE WHEN d.delivery_status = 'Failed'\n",
+        "                   THEN 1 ELSE 0 END)                   AS failed_count,\n",
+        "          ROUND(100.0 * SUM(CASE WHEN d.delivery_status = 'Failed'\n",
+        "                            THEN 1 ELSE 0 END) /\n",
+        "                COUNT(o.order_id), 2)                   AS failure_rate_pct\n",
+        "   FROM orders o\n",
+        "   LEFT JOIN deliveries d ON o.order_id = d.order_id\n",
+        "   GROUP BY o.service_type\n",
+        "   ORDER BY failure_rate_pct DESC\"\n",
+        ")\n",
+        "print(service_profit)\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "C4HT9DGquvf4",
+        "outputId": "827d977b-7d89-44f0-f067-73af07879c06"
+      },
+      "execution_count": 44,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "  service_type total_orders total_revenue avg_order_value total_fuel_cost\n",
+            "1     Business          165      15220.43           92.25         1655.91\n",
+            "2      Medical          139      12111.93           87.14         1379.48\n",
+            "3    Passenger          341      32761.11           96.07         3248.56\n",
+            "4       Retail          297      26734.06           90.01         2906.27\n",
+            "5       Parcel          308      26985.62           87.62         3009.01\n",
+            "  failed_count failure_rate_pct\n",
+            "1           25            15.15\n",
+            "2           16            11.51\n",
+            "3           38            11.14\n",
+            "4           28             9.43\n",
+            "5           25             8.12\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Hub Performance Analysis\n",
+        "\n",
+        "Operational hub performance is evaluated using failure rates, customer complaints, compensation costs, and route override frequency.\n",
+        "\n",
+        "### Objective\n",
+        "To identify underperforming operational hubs."
+      ],
+      "metadata": {
+        "id": "sRPVRvbgu1_P"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "\n",
+        "# ── Query 3: Hub-level failure, overrides, and complaints ────────────────\n",
+        "hub_perf <- sqldf(\n",
+        "  \"SELECT d.hub_id,\n",
+        "          COUNT(d.delivery_id)                          AS total_dispatches,\n",
+        "          SUM(CASE WHEN d.delivery_status='Failed'\n",
+        "                   THEN 1 ELSE 0 END)                  AS failed,\n",
+        "          ROUND(100.0 * SUM(CASE WHEN d.delivery_status='Failed'\n",
+        "                   THEN 1 ELSE 0 END) /\n",
+        "                COUNT(d.delivery_id), 1)               AS fail_pct,\n",
+        "          ROUND(AVG(d.manual_route_override_count),2)  AS avg_overrides,\n",
+        "          ROUND(AVG(d.customer_rating_post_delivery),2) AS avg_rating,\n",
+        "          COUNT(c.complaint_id)                        AS complaints,\n",
+        "          ROUND(SUM(c.compensation_amount),2)          AS total_compensation\n",
+        "   FROM deliveries d\n",
+        "   LEFT JOIN orders o ON d.order_id = o.order_id\n",
+        "   LEFT JOIN complaints c ON d.order_id = c.order_id\n",
+        "   GROUP BY d.hub_id\n",
+        "   HAVING COUNT(d.delivery_id) >= 10\n",
+        "   ORDER BY fail_pct DESC\"\n",
+        ")\n",
+        "print(hub_perf)\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "GChAygwFu2iy",
+        "outputId": "6ab4edd2-6d95-4c5b-bf54-46e9e16cc1b5"
+      },
+      "execution_count": 45,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "  hub_id total_dispatches failed fail_pct avg_overrides avg_rating complaints\n",
+            "1    H08              132     27     20.5          1.08       3.90         35\n",
+            "2    H05              117     23     19.7          0.94       3.68         30\n",
+            "3    H06              106     15     14.2          0.92       3.89         23\n",
+            "4    H01              142     18     12.7          1.02       3.84         32\n",
+            "5    H04              129     16     12.4          0.87       3.90         28\n",
+            "6    H07              118     14     11.9          1.04       3.89         33\n",
+            "7    H02              108     10      9.3          0.93       3.96         18\n",
+            "8    H03              121     11      9.1          0.89       3.90         33\n",
+            "  total_compensation\n",
+            "1             743.27\n",
+            "2             692.66\n",
+            "3             447.77\n",
+            "4             538.79\n",
+            "5             560.26\n",
+            "6             669.51\n",
+            "7             232.77\n",
+            "8             557.31\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Cost Efficiency per Kilometre\n",
+        "\n",
+        "Fuel and charging efficiency is analysed relative to travelled delivery distance.\n",
+        "\n",
+        "### Objective\n",
+        "To compare operational efficiency across delivery outcomes."
+      ],
+      "metadata": {
+        "id": "NQHJnjfMu-c-"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# ── Query 4: Cost efficiency — fuel cost per km by status ────────────────\n",
+        "cost_eff <- sqldf(\"\n",
+        "SELECT\n",
+        "    delivery_status,\n",
+        "    COUNT(*) AS total_deliveries,\n",
+        "    ROUND(SUM(fuel_or_charge_cost), 2) AS total_cost,\n",
+        "    ROUND(SUM(route_distance_km), 2) AS total_distance,\n",
+        "    ROUND(SUM(fuel_or_charge_cost) / SUM(route_distance_km), 3) AS cost_per_km,\n",
+        "    ROUND(AVG(fuel_or_charge_cost / route_distance_km), 3) AS avg_row_cost_per_km\n",
+        "FROM deliveries\n",
+        "WHERE route_distance_km > 0\n",
+        "GROUP BY delivery_status\n",
+        "ORDER BY cost_per_km DESC\n",
+        "\")\n",
+        "print(cost_eff)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 0
+        },
+        "id": "kN3joezcvBH9",
+        "outputId": "8ab10d34-961a-4d35-aa61-37605f835953"
+      },
+      "execution_count": 46,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "  delivery_status total_deliveries total_cost total_distance cost_per_km\n",
+            "1          Failed              132    1735.53        1764.22       0.984\n",
+            "2          OnTime              616    7809.68        8486.24       0.920\n",
+            "3         Delayed              202    2654.02        2963.39       0.896\n",
+            "  avg_row_cost_per_km\n",
+            "1               1.355\n",
+            "2               1.225\n",
+            "3               1.314\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Driver Performance Analysis\n",
+        "\n",
+        "Driver performance is analysed using training scores, incidents, customer ratings, and delivery failures.\n",
+        "\n",
+        "### Metrics Analysed\n",
+        "- Training score\n",
+        "- Failed deliveries\n",
+        "- Incident count\n",
+        "- Customer rating\n",
+        "\n",
+        "## Training Tier Comparison\n",
+        "\n",
+        "Drivers are grouped into training categories to compare operational performance.\n",
+        "\n",
+        "### Training Groups\n",
+        "- Low (<65)\n",
+        "- Mid (65–84)\n",
+        "- High (85+)"
+      ],
+      "metadata": {
+        "id": "q39XttyqvFMX"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# ── Query 5: Driver training vs. overrides and rating ────────────────────\n",
+        "driver_perf <- sqldf(\"\n",
+        "SELECT\n",
+        "    dr.driver_id,\n",
+        "    dr.base_zone,\n",
+        "    ROUND(AVG(dr.training_score), 2) AS avg_training_score,\n",
+        "    COUNT(d.delivery_id) AS total_deliveries,\n",
+        "    SUM(CASE WHEN d.delivery_status = 'Failed' THEN 1 ELSE 0 END) AS failed_deliveries,\n",
+        "    ROUND(AVG(d.customer_rating_post_delivery), 2) AS avg_customer_rating,\n",
+        "    COUNT(i.incident_id) AS incident_count\n",
+        "FROM drivers dr\n",
+        "LEFT JOIN deliveries d\n",
+        "    ON dr.driver_id = d.driver_id\n",
+        "LEFT JOIN incidents i\n",
+        "    ON d.delivery_id = i.delivery_id\n",
+        "GROUP BY dr.driver_id, dr.base_zone\n",
+        "ORDER BY avg_training_score DESC\n",
+        "LIMIT 15\n",
+        "\")\n",
+        "# Training tier comparison\n",
+        "tier_compare <- sqldf(\n",
+        "  \"SELECT\n",
+        "     CASE WHEN dr.training_score < 65   THEN 'Low (<65)'\n",
+        "          WHEN dr.training_score < 85   THEN 'Mid (65-84)'\n",
+        "          ELSE                               'High (85+)'\n",
+        "     END AS training_tier,\n",
+        "     COUNT(DISTINCT dr.driver_id)       AS driver_count,\n",
+        "     ROUND(AVG(d.manual_route_override_count),3) AS avg_overrides,\n",
+        "     ROUND(AVG(d.customer_rating_post_delivery),3) AS avg_cust_rating\n",
+        "   FROM drivers dr\n",
+        "   LEFT JOIN deliveries d ON dr.driver_id = d.driver_id\n",
+        "   GROUP BY training_tier\n",
+        "   ORDER BY avg_overrides DESC\"\n",
+        ")\n",
+        "tier_compare\n"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 192
+        },
+        "id": "ZY_pwQS2vEhM",
+        "outputId": "4d11b753-1398-444e-b451-8989cde936d0"
+      },
+      "execution_count": 47,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<table class=\"dataframe\">\n",
+              "<caption>A data.frame: 3 × 4</caption>\n",
+              "<thead>\n",
+              "\t<tr><th scope=col>training_tier</th><th scope=col>driver_count</th><th scope=col>avg_overrides</th><th scope=col>avg_cust_rating</th></tr>\n",
+              "\t<tr><th scope=col>&lt;chr&gt;</th><th scope=col>&lt;int&gt;</th><th scope=col>&lt;dbl&gt;</th><th scope=col>&lt;dbl&gt;</th></tr>\n",
+              "</thead>\n",
+              "<tbody>\n",
+              "\t<tr><td><span style=white-space:pre-wrap>Low (&lt;65)  </span></td><td> 29</td><td>1.006</td><td>3.875</td></tr>\n",
+              "\t<tr><td>Mid (65-84)</td><td>105</td><td>0.972</td><td>3.869</td></tr>\n",
+              "\t<tr><td>High (85+) </td><td> 36</td><td>0.933</td><td>3.845</td></tr>\n",
+              "</tbody>\n",
+              "</table>\n"
+            ],
+            "text/markdown": "\nA data.frame: 3 × 4\n\n| training_tier &lt;chr&gt; | driver_count &lt;int&gt; | avg_overrides &lt;dbl&gt; | avg_cust_rating &lt;dbl&gt; |\n|---|---|---|---|\n| Low (&lt;65)   |  29 | 1.006 | 3.875 |\n| Mid (65-84) | 105 | 0.972 | 3.869 |\n| High (85+)  |  36 | 0.933 | 3.845 |\n\n",
+            "text/latex": "A data.frame: 3 × 4\n\\begin{tabular}{llll}\n training\\_tier & driver\\_count & avg\\_overrides & avg\\_cust\\_rating\\\\\n <chr> & <int> & <dbl> & <dbl>\\\\\n\\hline\n\t Low (<65)   &  29 & 1.006 & 3.875\\\\\n\t Mid (65-84) & 105 & 0.972 & 3.869\\\\\n\t High (85+)  &  36 & 0.933 & 3.845\\\\\n\\end{tabular}\n",
+            "text/plain": [
+              "  training_tier driver_count avg_overrides avg_cust_rating\n",
+              "1 Low (<65)      29          1.006         3.875          \n",
+              "2 Mid (65-84)   105          0.972         3.869          \n",
+              "3 High (85+)     36          0.933         3.845          "
+            ]
+          },
+          "metadata": {}
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyPeg0yyl6fpLXVNuKZrSqpE",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "display_name": "R",
+      "name": "ir"
+    },
+    "language_info": {
+      "name": "R"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
